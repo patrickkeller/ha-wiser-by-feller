@@ -1,0 +1,58 @@
+name: "🌍 Language support"
+description: Request translation into a specific language or report a bad translation.
+type: Translation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting translation issue! Please complete the form below so helping you is as easy as possible.
+
+  - type: dropdown
+    id: request_type
+    attributes:
+      label: Request type
+      multiple: false
+      options:
+        - Missing language
+        - Bad translation
+      default: 0
+    validations:
+      required: true
+
+  - type: input
+    id: language
+    attributes:
+      label: Language
+      placeholder: e.g. French
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        The following fields only need to be provided if you want to report a bad translation. 
+
+  - type: input
+    id: label
+    attributes:
+      label: Context
+      description: In what part of the integration did you encounter the bad translation?
+      placeholder: e.g Action "set_button_led_override" → LED naming
+    validations:
+      required: false
+
+  - type: textarea
+    id: current_translation
+    attributes:
+      label: Current translation
+      placeholder: e.g. "LED 0"
+    validations:
+      required: false
+
+  - type: textarea
+    id: improved_translation
+    attributes:
+      label: Improved translation
+      placeholder: e.g. Primary (Up/Plus for dimmer or motor buttons)
+    validations:
+      required: true
