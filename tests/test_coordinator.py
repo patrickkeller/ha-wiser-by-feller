@@ -76,7 +76,8 @@ def mock_api():
     api.async_get_info_debug = AsyncMock(return_value=MOCK_GATEWAY_INFO)
     api.async_get_used_loads = AsyncMock(return_value=[])
     api.async_get_rooms = AsyncMock(return_value=[])
-    api.async_get_devices_detail = AsyncMock(return_value=[])
+    api.async_get_devices = AsyncMock(return_value=[])
+    api.async_get_device = AsyncMock(return_value=None)
     api.async_get_jobs = AsyncMock(return_value=[])
     api.async_get_scenes = AsyncMock(return_value=[])
     api.async_get_system_flags = AsyncMock(return_value=[])
@@ -190,10 +191,10 @@ async def test_loads_fetched_only_once(coordinator, mock_api):
 async def test_devices_fetched_only_once(coordinator, mock_api):
     """Devices are fetched on the first update and skipped on subsequent updates."""
     await coordinator._async_update_data()
-    assert mock_api.async_get_devices_detail.call_count == 1
+    assert mock_api.async_get_devices.call_count == 1
 
     await coordinator._async_update_data()
-    assert mock_api.async_get_devices_detail.call_count == 1
+    assert mock_api.async_get_devices.call_count == 1
 
 
 # ── unknown type issues ───────────────────────────────────────────────────────
@@ -596,6 +597,17 @@ def _make_device_with_id(device_id="00254a0"):
     return device
 
 
+def _wire_devices(mock_api, devices):
+    """Wire the per-device fetch used by async_update_devices.
+
+    The coordinator lists devices via async_get_devices() and then fetches each
+    one's detail via async_get_device(id) to avoid the bulk devices/* response.
+    """
+    mock_api.async_get_devices.return_value = devices
+    by_id = {device.id: device for device in devices}
+    mock_api.async_get_device.side_effect = lambda device_id: by_id[device_id]
+
+
 def test_validate_device_data_creates_issue_on_validation_failure(coordinator, hass):
     """When Device.validate_data() raises, a fixable HA issue is created."""
     device = _make_device_with_id("00254a0")
@@ -690,7 +702,7 @@ async def test_update_data_raises_config_entry_error_on_missing_device_data(
     bad_device.validate_data.side_effect = (
         aiowiserbyfeller.errors.UnexpectedGatewayResponse("serial_nr missing")
     )
-    mock_api.async_get_devices_detail.return_value = [bad_device]
+    _wire_devices(mock_api, [bad_device])
 
     with (
         patch("custom_components.wiser_by_feller.coordinator.ir.async_create_issue"),
@@ -712,7 +724,7 @@ async def test_update_devices_collects_all_issues_before_raising(
     bad2.validate_data.side_effect = aiowiserbyfeller.errors.UnexpectedGatewayResponse(
         "missing"
     )
-    mock_api.async_get_devices_detail.return_value = [bad1, bad2]
+    _wire_devices(mock_api, [bad1, bad2])
 
     created_ids = []
     with (
@@ -738,7 +750,7 @@ async def test_update_devices_deletes_issue_for_valid_device(
     good = _make_device_with_id("good1")
     good.validate_data.return_value = None
     good.c = {"comm_ref": "ABC"}
-    mock_api.async_get_devices_detail.return_value = [good]
+    _wire_devices(mock_api, [good])
 
     with (
         patch(

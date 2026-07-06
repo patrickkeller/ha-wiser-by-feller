@@ -410,10 +410,12 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
                     await self.async_update_rooms()
 
             if self._devices is None:
-                # Updating the detailed device information takes ~1 second per device on µGWv1
-                # and the limit for a µGWv1 system is at 50 devices. µGWv2 devices allow for
-                # 100 devices, but update much faster (~500 ms for 30 devices).
-                async with asyncio.timeout(75):
+                # Device details are fetched one-by-one (see async_update_devices)
+                # because the bulk `devices/*` response never completes on µGWv1
+                # firmware 5.x. Sequential per-device fetches are slower (~1-2 s
+                # each), so allow a generous budget for the initial load. The
+                # µGWv1 limit is ~50 devices; µGWv2 is faster.
+                async with asyncio.timeout(240):
                     await self.async_update_devices()
 
             if self._jobs is None:
@@ -574,7 +576,22 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
         _LOGGER.debug(
             "Attempting to update detailed device information from µGateway..."
         )
-        for device in await self._api.async_get_devices_detail():
+        # Local fork patch: Fetch device details one-by-one instead of the bulk
+        # `GET devices/*`. On µGateway v1 (firmware 5.x) the single huge
+        # devices/* response never completes within the timeout — the gateway
+        # serves small responses fine (info/rooms return instantly) but chokes
+        # on assembling the full detail for every device at once. Per-device
+        # `GET devices/{id}` keeps each response small and completes reliably.
+        device_list = await self._api.async_get_devices()
+        _LOGGER.debug(
+            "Fetching details for %d device(s) individually...", len(device_list)
+        )
+        detailed_devices = [
+            await self._api.async_get_device(dev.id)
+            for dev in device_list
+            if dev.id is not None
+        ]
+        for device in detailed_devices:
             try:
                 self.validate_device_data(device)
             except UnexpectedGatewayResult:
