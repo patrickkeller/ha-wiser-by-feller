@@ -508,16 +508,20 @@ async def test_ws_idle_logs_warning_once(coordinator, mock_api, caplog):
     assert coordinator._ws_was_idle is True
 
 
-async def test_ws_idle_recovery_logs_info(coordinator, mock_api, caplog):
-    """After being idle, a successful reconnect logs an info recovery message."""
-    coordinator._ws_was_idle = True
-    coordinator._ws.is_idle.return_value = False
+async def test_ws_idle_does_not_reconnect(coordinator, mock_api):
+    """When the WebSocket is idle the integration must NOT re-init it.
 
-    with caplog.at_level(logging.INFO):
-        await coordinator._async_update_data()
+    Auto re-init on idle caused an endless reconnect storm that crashed
+    µGateway v1 (firmware 5.x); the integration falls back to 30s polling
+    instead. See coordinator._async_update_data.
+    """
+    coordinator._ws.is_idle.return_value = True
+    coordinator._ws.init.reset_mock()
 
-    assert coordinator._ws_was_idle is False
-    assert any("re-established" in r.message.lower() for r in caplog.records)
+    await coordinator._async_update_data()
+    await coordinator._async_update_data()
+
+    coordinator._ws.init.assert_not_called()
 
 
 # ── status light ──────────────────────────────────────────────────────────────

@@ -453,19 +453,24 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
 
             _LOGGER.debug("Successfully updated data from µGateway.")
 
-            # Reconnect WebSocket if it has died
-            if self._ws.is_idle():
-                if not self._ws_was_idle:
-                    _LOGGER.warning(
-                        "WebSocket connection to µGateway is idle/disconnected. Reconnecting..."
-                    )
-                    self._ws_was_idle = True
-                await self.ws_close()
-                self._ws.reset_error_count()
-                self._ws.init()
-            elif self._ws_was_idle:
-                _LOGGER.info("WebSocket connection to µGateway re-established.")
-                self._ws_was_idle = False
+            # NOTE (local fork patch): The automatic WebSocket re-init added in
+            # 0.3.0 (#57) re-initialised the connection on every update once it
+            # went idle. On µGateway v1 (Gen A, firmware 5.x) the gateway drops
+            # the WebSocket periodically, so this turned into an endless
+            # reconnect storm: aiowiserbyfeller's Websocket.async_close() never
+            # assigns self._ws, so it can neither close the connection nor cancel
+            # the detached connect() task — every re-init leaked a live
+            # connection and eventually crashed the gateway ("Timeout while
+            # fetching data from µGateway"). We keep the pre-0.3.0 behaviour:
+            # connect once and, if the WebSocket dies, fall back to 30s HTTP
+            # polling instead of re-initialising.
+            if self._ws.is_idle() and not self._ws_was_idle:
+                self._ws_was_idle = True
+                _LOGGER.warning(
+                    "WebSocket connection to µGateway is idle/disconnected. "
+                    "Falling back to 30s polling (auto-reconnect disabled to "
+                    "avoid overwhelming the gateway)."
+                )
 
         except asyncio.TimeoutError as err:
             raise UpdateFailed("Timeout while fetching data from µGateway") from err
