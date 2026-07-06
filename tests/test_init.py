@@ -58,8 +58,33 @@ async def test_setup_entry_keeps_existing_import_user(
 
 
 async def test_setup_entry_calls_ws_init(hass, setup_integration, mock_coordinator):
-    """async_setup_entry calls ws_init() to start the WebSocket connection."""
+    """async_setup_entry starts the WebSocket on Gen B gateways (is_gen_b=True)."""
     mock_coordinator.ws_init.assert_called_once()
+
+
+async def test_setup_entry_skips_ws_init_on_gen_a(
+    hass, mock_config_entry, mock_coordinator
+):
+    """On Gen A (API v5, firmware 5.x) the WebSocket must NOT be started.
+
+    Its keepalive pings time out and the leaked connect() task hammers the
+    gateway during the heavy `devices/*` fetch, crashing it. Gen A runs
+    poll-only. See async_setup_entry.
+    """
+    mock_coordinator.is_gen_b = False
+    mock_config_entry.add_to_hass(hass)
+    with (
+        patch("custom_components.wiser_by_feller.Auth"),
+        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
+        patch(
+            "custom_components.wiser_by_feller.WiserCoordinator",
+            return_value=mock_coordinator,
+        ),
+    ):
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    mock_coordinator.ws_init.assert_not_called()
 
 
 async def test_setup_entry_calls_first_refresh(

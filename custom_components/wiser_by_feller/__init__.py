@@ -297,7 +297,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     wiser_coordinator = WiserCoordinator(
         hass, api, entry.data["host"], entry.data["token"], entry.options
     )
-    wiser_coordinator.ws_init()
 
     entry.runtime_data = wiser_coordinator
 
@@ -305,6 +304,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await async_setup_gateway(hass, entry, wiser_coordinator)
     await async_remove_stale_devices(hass, entry, wiser_coordinator)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Local fork patch: Start the WebSocket only AFTER the (heavy) first refresh,
+    # and only on gateways that can actually sustain it. On µGateway v1
+    # (Gen A / API v5, firmware 5.x) the WebSocket keepalive pings time out
+    # constantly, and because aiowiserbyfeller's async_close() cannot stop the
+    # connect() task, every setup retry leaks another live connection. That
+    # growing WS load hammers the gateway during the expensive `devices/*` fetch
+    # and crashes it -> "Timeout while fetching data from µGateway". Gen A
+    # therefore runs poll-only (30s); Gen B keeps real-time push.
+    if wiser_coordinator.is_gen_b:
+        wiser_coordinator.ws_init()
 
     return True
 
