@@ -8,6 +8,7 @@ import logging
 from types import MappingProxyType
 from typing import Any
 
+from aiohttp import ServerDisconnectedError
 from aiowiserbyfeller import (
     AuthorizationFailed,
     Button,
@@ -389,6 +390,20 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
         }
 
     async def _async_update_data(self) -> None:
+        """Fetch data, retrying once on a transient gateway disconnect."""
+        try:
+            await self._fetch_data()
+        except ServerDisconnectedError:
+            # µGateway v1 (firmware 5.x) drops idle keepalive HTTP connections;
+            # a reused stale connection surfaces as ServerDisconnectedError. Retry
+            # once with a fresh connection before letting the update fail, which
+            # would briefly mark every entity unavailable.
+            _LOGGER.debug(
+                "µGateway dropped the HTTP connection; retrying the update once"
+            )
+            await self._fetch_data()
+
+    async def _fetch_data(self) -> None:
         """Fetch data from API endpoint.
 
         This is the place to pre-process the data to lookup tables

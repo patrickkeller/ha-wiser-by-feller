@@ -4,6 +4,7 @@ import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from aiohttp import ServerDisconnectedError
 from aiowiserbyfeller import (
     AuthorizationFailed,
     Load,
@@ -195,6 +196,36 @@ async def test_devices_fetched_only_once(coordinator, mock_api):
 
     await coordinator._async_update_data()
     assert mock_api.async_get_devices.call_count == 1
+
+
+async def test_update_retries_once_on_server_disconnected(coordinator):
+    """A single transient ServerDisconnectedError is retried, not surfaced.
+
+    Firmware 5.x drops idle keepalive connections; one stale reuse must not blank
+    every entity. See _async_update_data.
+    """
+    calls = []
+
+    async def fake_fetch():
+        calls.append(1)
+        if len(calls) == 1:
+            raise ServerDisconnectedError
+
+    coordinator._fetch_data = fake_fetch
+    await coordinator._async_update_data()
+
+    assert len(calls) == 2
+
+
+async def test_update_reraises_second_server_disconnected(coordinator):
+    """Two consecutive disconnects surface as a failed update (genuine outage)."""
+
+    async def fake_fetch():
+        raise ServerDisconnectedError
+
+    coordinator._fetch_data = fake_fetch
+    with pytest.raises(ServerDisconnectedError):
+        await coordinator._async_update_data()
 
 
 # ── unknown type issues ───────────────────────────────────────────────────────
