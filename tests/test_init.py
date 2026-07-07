@@ -58,18 +58,18 @@ async def test_setup_entry_keeps_existing_import_user(
 
 
 async def test_setup_entry_calls_ws_init(hass, setup_integration, mock_coordinator):
-    """async_setup_entry starts the WebSocket on Gen B gateways (is_gen_b=True)."""
+    """async_setup_entry starts the WebSocket after the first refresh."""
     mock_coordinator.ws_init.assert_called_once()
 
 
-async def test_setup_entry_skips_ws_init_on_gen_a(
+async def test_setup_entry_starts_ws_init_on_gen_a(
     hass, mock_config_entry, mock_coordinator
 ):
-    """On Gen A (API v5, firmware 5.x) the WebSocket must NOT be started.
+    """Gen A (API v5, firmware 5.x) also starts the WebSocket.
 
-    Its keepalive pings time out and the leaked connect() task hammers the
-    gateway during the heavy `devices/*` fetch, crashing it. Gen A runs
-    poll-only. See async_setup_entry.
+    Keepalive pings are disabled (NoKeepalivePingWebsocket) so the old firmware
+    no longer drops the connection, restoring real-time push. See
+    async_setup_entry.
     """
     mock_coordinator.is_gen_b = False
     mock_config_entry.add_to_hass(hass)
@@ -84,7 +84,7 @@ async def test_setup_entry_skips_ws_init_on_gen_a(
         await hass.config_entries.async_setup(mock_config_entry.entry_id)
         await hass.async_block_till_done()
 
-    mock_coordinator.ws_init.assert_not_called()
+    mock_coordinator.ws_init.assert_called_once()
 
 
 async def test_setup_entry_calls_first_refresh(

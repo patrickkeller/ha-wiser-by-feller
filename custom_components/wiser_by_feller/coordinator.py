@@ -20,7 +20,6 @@ from aiowiserbyfeller import (
     SystemFlag,
     UnauthorizedUser,
     UnsuccessfulRequest,
-    Websocket,
     WiserByFellerAPI,
 )
 from aiowiserbyfeller.const import LOAD_SUBTYPE_ONOFF_DTO, LOAD_TYPE_ONOFF
@@ -47,6 +46,7 @@ from .const import (
 )
 from .exceptions import UnexpectedGatewayResult
 from .util import resolve_device_name, rgb_tuple_to_hex
+from .websocket import NoKeepalivePingWebsocket
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
         self._gateway_info: dict[str, Any] | None = None
         self._managed_buttons: dict[int, Any] | None = None
         self._findme_button_future: asyncio.Future | None = None
-        self._ws = Websocket(host, token, _LOGGER)
+        self._ws = NoKeepalivePingWebsocket(host, token, _LOGGER)
         self._ws_was_idle = False
 
     @property
