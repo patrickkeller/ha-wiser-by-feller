@@ -413,15 +413,19 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
             _LOGGER.debug("Attempting to update data from µGateway...")
             # Note: asyncio.TimeoutError and aiohttp.ClientError are already
             # handled by the data update coordinator.
-            async with asyncio.timeout(10):
+            # Local fork patch: per-step timeout is 30s (was 10s) because
+            # µGateway v1 firmware 5.x is slow — even trivial calls can take
+            # 6-8s (whole polls 5-17s). A tighter limit tripped constantly and
+            # briefly marked every entity unavailable on each slow poll.
+            async with asyncio.timeout(30):
                 await self.async_update_gateway_info()
 
             if self._loads is None:
-                async with asyncio.timeout(10):
+                async with asyncio.timeout(30):
                     await self.async_update_loads()
 
             if self._rooms is None:
-                async with asyncio.timeout(10):
+                async with asyncio.timeout(30):
                     await self.async_update_rooms()
 
             if self._devices is None:
@@ -434,38 +438,38 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
                     await self.async_update_devices()
 
             if self._jobs is None:
-                async with asyncio.timeout(10):
+                async with asyncio.timeout(30):
                     await self.async_update_jobs()
 
             if self._scenes is None:
-                async with asyncio.timeout(10):
+                async with asyncio.timeout(30):
                     await self.async_update_scenes()
 
             if self._system_flags is None:
-                async with asyncio.timeout(10):
+                async with asyncio.timeout(30):
                     await self.async_update_system_flags()
 
             if self._sensors is None and self.gateway_supports_sensors:
-                async with asyncio.timeout(10):
+                async with asyncio.timeout(30):
                     await self.async_update_sensors()
 
             if self._hvac_groups is None and self.gateway_supports_hvac_groups:
-                async with asyncio.timeout(10):
+                async with asyncio.timeout(30):
                     await self.async_update_hvac_groups()
 
             if self._managed_buttons is None:
                 self._managed_buttons = {}
                 if self.supports_feature(MIN_FIRMWARE_MANAGED_BUTTONS):
                     try:
-                        async with asyncio.timeout(10):
+                        async with asyncio.timeout(30):
                             await self.async_update_managed_buttons()
                     except Exception as err:  # noqa: BLE001
                         _LOGGER.warning("Failed to load managed buttons: %s", err)
 
-            async with asyncio.timeout(10):
+            async with asyncio.timeout(30):
                 await self.async_update_states()
 
-            async with asyncio.timeout(10):
+            async with asyncio.timeout(30):
                 await self.async_update_system_health()
 
             _LOGGER.debug("Successfully updated data from µGateway.")
