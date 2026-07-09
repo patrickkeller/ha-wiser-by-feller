@@ -73,7 +73,10 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
             hass,
             _LOGGER,
             name="WiserCoordinator",
-            update_interval=timedelta(seconds=30),
+            # The WebSocket is the primary, real-time source. Polling is only a
+            # low-rate resync safety net — kept infrequent to spare the weak
+            # µGateway v1 (see _async_update_data / _ensure_websocket).
+            update_interval=timedelta(minutes=5),
         )
         self._hass = hass
         self._api = api
@@ -95,7 +98,8 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
         self._managed_buttons: dict[int, Any] | None = None
         self._findme_button_future: asyncio.Future | None = None
         self._ws = NoKeepalivePingWebsocket(host, token, _LOGGER)
-        self._ws_was_idle = False
+        self._ws.subscribe(self.ws_update_data)
+        self._ws_started = False
 
     @property
     def loads(self) -> dict[int, Load] | None:
@@ -390,18 +394,50 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
         }
 
     async def _async_update_data(self) -> None:
-        """Fetch data, retrying once on a transient gateway disconnect."""
+        """Resync state via HTTP polling — a low-rate safety net for the WebSocket.
+
+        The WebSocket is the primary, real-time source. A slow or failed poll must
+        therefore NOT blank every entity once we have data: we keep the last
+        (WebSocket-maintained) state instead. Before the initial load (setup) a
+        failure is still surfaced so setup retries. Each cycle also (re)starts the
+        WebSocket if its background task has died.
+        """
         try:
-            await self._fetch_data()
-        except ServerDisconnectedError:
-            # µGateway v1 (firmware 5.x) drops idle keepalive HTTP connections;
-            # a reused stale connection surfaces as ServerDisconnectedError. Retry
-            # once with a fresh connection before letting the update fail, which
-            # would briefly mark every entity unavailable.
-            _LOGGER.debug(
-                "µGateway dropped the HTTP connection; retrying the update once"
+            try:
+                await self._fetch_data()
+            except ServerDisconnectedError:
+                # µGateway v1 (firmware 5.x) drops idle keepalive HTTP
+                # connections; a reused stale connection surfaces as
+                # ServerDisconnectedError. Retry once with a fresh connection.
+                _LOGGER.debug(
+                    "µGateway dropped the HTTP connection; retrying the update once"
+                )
+                await self._fetch_data()
+        except (UpdateFailed, ServerDisconnectedError) as err:
+            if self._states is None:
+                raise  # initial load failed -> let setup retry / surface it
+            _LOGGER.warning(
+                "µGateway poll failed (%s); keeping last known state "
+                "(WebSocket remains the live source)",
+                err,
             )
-            await self._fetch_data()
+        finally:
+            self._ensure_websocket()
+
+    def _ensure_websocket(self) -> None:
+        """Keep the WebSocket (primary update source) alive.
+
+        Only acts once ws_init() has started it (after the first refresh, so it
+        never competes with the heavy initial fetch). Restarts the connection if
+        the background task has ended — the ping-less link rarely drops, but if
+        the gateway reboots enough times the library gives up.
+        """
+        if not self._ws_started:
+            return
+        if not self._ws.is_running():
+            _LOGGER.info("WebSocket to µGateway not running; reconnecting.")
+            self._ws.reset_error_count()
+            self._ws.init()
 
     async def _fetch_data(self) -> None:
         """Fetch data from API endpoint.
@@ -474,25 +510,6 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
 
             _LOGGER.debug("Successfully updated data from µGateway.")
 
-            # NOTE (local fork patch): The automatic WebSocket re-init added in
-            # 0.3.0 (#57) re-initialised the connection on every update once it
-            # went idle. On µGateway v1 (Gen A, firmware 5.x) the gateway drops
-            # the WebSocket periodically, so this turned into an endless
-            # reconnect storm: aiowiserbyfeller's Websocket.async_close() never
-            # assigns self._ws, so it can neither close the connection nor cancel
-            # the detached connect() task — every re-init leaked a live
-            # connection and eventually crashed the gateway ("Timeout while
-            # fetching data from µGateway"). We keep the pre-0.3.0 behaviour:
-            # connect once and, if the WebSocket dies, fall back to 30s HTTP
-            # polling instead of re-initialising.
-            if self._ws.is_idle() and not self._ws_was_idle:
-                self._ws_was_idle = True
-                _LOGGER.warning(
-                    "WebSocket connection to µGateway is idle/disconnected. "
-                    "Falling back to 30s polling (auto-reconnect disabled to "
-                    "avoid overwhelming the gateway)."
-                )
-
         except asyncio.TimeoutError as err:
             raise UpdateFailed("Timeout while fetching data from µGateway") from err
         except (AuthorizationFailed, UnauthorizedUser) as err:
@@ -509,10 +526,13 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
         await self._ws.async_close()
 
     def ws_init(self) -> None:
-        """Set up websocket with µGateway to receive load updates."""
-        self._ws.subscribe(self.ws_update_data)
+        """Start the WebSocket connection (subscription is set up in __init__).
+
+        Called once after the first refresh; reconnection afterwards is handled
+        by _ensure_websocket() on each poll.
+        """
         self._ws.init()
-        # WebSocket reconnection is handled in _async_update_data()
+        self._ws_started = True
 
     def ws_update_data(self, data: dict) -> None:
         """Process websocket data update."""

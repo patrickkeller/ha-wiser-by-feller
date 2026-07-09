@@ -1,5 +1,6 @@
 """Tests for the keepalive-ping-free WebSocket used on old µGateway firmware."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from custom_components.wiser_by_feller.websocket import NoKeepalivePingWebsocket
@@ -48,3 +49,24 @@ async def test_on_message_resets_error_count():
     await ws.on_message('{"load": {"id": 1, "state": {"bri": 100}}}')
 
     assert ws._errcount == 0
+
+
+async def test_init_is_running_and_async_close_track_the_task():
+    """init() starts a tracked task; async_close() cancels it (upstream can't)."""
+    ws = _make_ws()
+    assert ws.is_running() is False
+
+    started = asyncio.Event()
+
+    async def _blocking_connect():
+        started.set()
+        await asyncio.Event().wait()  # run until cancelled
+
+    with patch.object(ws, "connect", _blocking_connect):
+        ws.init()
+        await started.wait()
+        assert ws.is_running() is True
+
+        await ws.async_close()
+        assert ws.is_running() is False
+        assert ws._task is None

@@ -93,13 +93,14 @@ def mock_api():
 
 @pytest.fixture
 def coordinator(hass, mock_api):
-    """Return a WiserCoordinator with a mocked websocket (is_idle=False)."""
+    """Return a WiserCoordinator with a mocked websocket (running)."""
     mock_ws = MagicMock()
     mock_ws.is_idle.return_value = False
+    mock_ws.is_running.return_value = True
     mock_ws.async_close = AsyncMock()
 
     with patch(
-        "custom_components.wiser_by_feller.coordinator.Websocket",
+        "custom_components.wiser_by_feller.coordinator.NoKeepalivePingWebsocket",
         return_value=mock_ws,
     ):
         return WiserCoordinator(hass, mock_api, MOCK_HOST, MOCK_TOKEN, {})
@@ -527,33 +528,49 @@ def test_resolve_button_fields_scene_none_when_button_has_no_job(coordinator):
     assert coordinator.resolve_managed_button_fields(1)["scene_name"] is None
 
 
-async def test_ws_idle_logs_warning_once(coordinator, mock_api, caplog):
-    """WebSocket idle triggers a warning only on the first detection, not every poll."""
-    coordinator._ws.is_idle.return_value = True
-
-    with caplog.at_level(logging.WARNING):
-        await coordinator._async_update_data()
-        await coordinator._async_update_data()
-
-    warnings = [r for r in caplog.records if "idle" in r.message.lower()]
-    assert len(warnings) == 1
-    assert coordinator._ws_was_idle is True
-
-
-async def test_ws_idle_does_not_reconnect(coordinator, mock_api):
-    """When the WebSocket is idle the integration must NOT re-init it.
-
-    Auto re-init on idle caused an endless reconnect storm that crashed
-    µGateway v1 (firmware 5.x); the integration falls back to 30s polling
-    instead. See coordinator._async_update_data.
-    """
-    coordinator._ws.is_idle.return_value = True
+async def test_ws_restarted_when_task_died(coordinator, mock_api):
+    """A dead WebSocket task is restarted on the next poll (WS is the primary source)."""
+    coordinator._ws_started = True
+    coordinator._ws.is_running.return_value = False
     coordinator._ws.init.reset_mock()
 
     await coordinator._async_update_data()
+
+    coordinator._ws.init.assert_called_once()
+
+
+async def test_ws_not_started_before_ws_init(coordinator, mock_api):
+    """The WebSocket is not (re)started before ws_init() runs (i.e. during setup)."""
+    coordinator._ws_started = False
+    coordinator._ws.is_running.return_value = False
+    coordinator._ws.init.reset_mock()
+
     await coordinator._async_update_data()
 
     coordinator._ws.init.assert_not_called()
+
+
+async def test_poll_failure_kept_after_initial_load(coordinator):
+    """Once we have data, a failed poll keeps the last state instead of blanking."""
+    coordinator._states = {1: {}}
+
+    async def boom():
+        raise UpdateFailed("slow gateway")
+
+    coordinator._fetch_data = boom
+    await coordinator._async_update_data()  # must not raise
+
+
+async def test_poll_failure_raised_before_initial_load(coordinator):
+    """Before we have data (setup), a failed poll surfaces so setup retries."""
+    coordinator._states = None
+
+    async def boom():
+        raise UpdateFailed("slow gateway")
+
+    coordinator._fetch_data = boom
+    with pytest.raises(UpdateFailed):
+        await coordinator._async_update_data()
 
 
 # ── status light ──────────────────────────────────────────────────────────────
