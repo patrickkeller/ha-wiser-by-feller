@@ -121,20 +121,18 @@ class WiserRelayEntity(WiserEntity, CoverEntity):
         self.start_tracking()
 
     def start_tracking(self) -> None:
-        """Keep track of cover movement while moving.
+        """Disabled on this fork — movement tracking added load for no benefit.
 
-        Note: Currently the API does not return an updated position when polled during motion, so
-              This whole tracking subroutine is for nothing. However, we'll keep it for now, if a
-              future firmware update changes the API behavior.
+        Upstream's own note said the µGateway API "does not return an updated
+        position when polled during motion, so this whole tracking subroutine is
+        for nothing". On the weak µGateway v1 (firmware 5.x) it was actively
+        harmful: every cover movement spawned a task that polled
+        loads/{id}/state once per second, piling extra HTTP requests onto an
+        already-overwhelmed gateway and throwing "Server disconnected" errors
+        mid-motion. Live position updates come from the WebSocket instead; the
+        final position is corrected on the next coordinator poll.
         """
-        if self._tracking_task and not self._tracking_task.done():
-            _LOGGER.debug(
-                "Load #%s: Stopping previously active tracking task", self._load.id
-            )
-            self._tracking_task.cancel()
-
-        _LOGGER.debug("Load #%s: Starting tracking task", self._load.id)
-        self._tracking_task = asyncio.create_task(self._track_movement_loop())
+        return
 
     async def _track_movement_loop(self) -> None:
         """Keep updating load state while the cover is moving."""
