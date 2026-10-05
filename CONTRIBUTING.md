@@ -122,6 +122,8 @@ open htmlcov/index.html
 | `tests/test_scene.py` | Scene platform: scene entities, job filtering |
 | `tests/test_diagnostics.py` | Diagnostic output, redaction of serial numbers and tokens |
 | `tests/test_config_flow.py` | Config flow: discovery, user step, re-auth |
+| `tests/test_websocket.py` | `GatewayWebsocket`: reconnect backoff, dead-connection detection, per-message error handling, restart/close lifecycle |
+| `tests/test_gateway_auth.py` | `SerializedAuth`: one request at a time, per-request timeout |
 
 ### Shared fixtures
 
@@ -139,7 +141,7 @@ For unit tests that don't need a full HA stack (e.g. entity property tests), ins
 
 - Use `MagicMock(spec=<ApiClass>)` for load/device/sensor objects; set only the attributes your test exercises.
 - Always set `load.name` to a plain string — `resolve_device_name()` reads it and the HA device registry will reject a `MagicMock` value during teardown.
-- For full-stack platform tests (those that call `hass.config_entries.async_setup`), use the `mock_config_entry` and `mock_coordinator` fixtures and patch `Auth`, `WiserByFellerAPI`, and `WiserCoordinator` in `custom_components.wiser_by_feller`.
+- For full-stack platform tests (those that call `hass.config_entries.async_setup`), use the `mock_config_entry` and `mock_coordinator` fixtures and patch `SerializedAuth`, `WiserByFellerAPI`, and `WiserCoordinator` in `custom_components.wiser_by_feller`.
 
 ## Before committing
 

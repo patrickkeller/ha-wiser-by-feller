@@ -1,7 +1,7 @@
 """Tests for WiserCoordinator."""
 
 import asyncio
-import logging
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiohttp import ServerDisconnectedError
@@ -98,9 +98,11 @@ def coordinator(hass, mock_api):
     mock_ws.is_idle.return_value = False
     mock_ws.is_running.return_value = True
     mock_ws.async_close = AsyncMock()
+    mock_ws.async_restart = AsyncMock()
+    mock_ws.connected_since = None
 
     with patch(
-        "custom_components.wiser_by_feller.coordinator.NoKeepalivePingWebsocket",
+        "custom_components.wiser_by_feller.coordinator.GatewayWebsocket",
         return_value=mock_ws,
     ):
         return WiserCoordinator(hass, mock_api, MOCK_HOST, MOCK_TOKEN, {})
@@ -814,3 +816,106 @@ async def test_update_devices_deletes_issue_for_valid_device(
 
     deleted_ids = [call.args[2] for call in mock_delete.call_args_list]
     assert "missing_device_data_good1" in deleted_ids
+
+
+# ── WebSocket liveness / poll merge ──────────────────────────────────────────
+
+
+async def test_ws_restarted_when_gateway_rebooted_after_connect(coordinator, mock_api):
+    """A connection opened before a gateway reboot is half-open: restart it."""
+    coordinator._ws_started = True
+    coordinator._states = {}
+    coordinator._ws.connected_since = time.monotonic() - 3600
+
+    mock_api.async_get_system_health.return_value = {"uptime": 86400}
+    await coordinator._async_update_data()
+    coordinator._ws.async_restart.assert_not_called()
+
+    mock_api.async_get_system_health.return_value = {"uptime": 120}
+    await coordinator._async_update_data()
+    coordinator._ws.async_restart.assert_awaited_once()
+
+
+async def test_repeated_reboot_detected_despite_larger_uptime(coordinator, mock_api):
+    """Polls hours apart: a second reboot can report more uptime than last seen."""
+    coordinator._ws_started = True
+    coordinator._states = {}
+    mock_api.async_get_system_health.return_value = {"uptime": 60}
+    with patch("custom_components.wiser_by_feller.coordinator.time") as mock_time:
+        mock_time.monotonic.return_value = 10_000
+        await coordinator._async_update_data()
+
+        coordinator._ws.connected_since = 9_990
+        mock_time.monotonic.return_value = 20_000  # ~3 h later, rebooted again
+        mock_api.async_get_system_health.return_value = {"uptime": 300}
+        await coordinator._async_update_data()
+
+    coordinator._ws.async_restart.assert_awaited_once()
+
+
+async def test_ws_kept_when_connected_after_reboot(coordinator, mock_api):
+    """A connection opened after the reboot is healthy and kept."""
+    coordinator._ws_started = True
+    coordinator._states = {}
+
+    mock_api.async_get_system_health.return_value = {"uptime": 86400}
+    await coordinator._async_update_data()
+
+    coordinator._ws.connected_since = time.monotonic() - 60
+    mock_api.async_get_system_health.return_value = {"uptime": 600}
+    await coordinator._async_update_data()
+
+    coordinator._ws.async_restart.assert_not_called()
+
+
+async def test_gateway_info_fetched_once_and_after_reboot(coordinator, mock_api):
+    """info/debug is static: fetched on the first poll and again after a reboot."""
+    mock_api.async_get_system_health.return_value = {"uptime": 1000}
+    await coordinator._async_update_data()
+    await coordinator._async_update_data()
+    assert mock_api.async_get_info_debug.await_count == 1
+
+    mock_api.async_get_system_health.return_value = {"uptime": 10}
+    await coordinator._async_update_data()
+    await coordinator._async_update_data()
+    assert mock_api.async_get_info_debug.await_count == 2
+
+
+async def test_poll_keeps_ws_update_received_during_poll(coordinator, mock_api):
+    """A WebSocket update arriving while a slow poll runs beats the poll snapshot."""
+    coordinator._states = {1: {"bri": 0}, 2: {"bri": 0}}
+
+    async def slow_loads_state():
+        # The gateway assembled this snapshot before the WS update arrived.
+        coordinator.ws_update_data({"load": {"id": 1, "state": {"bri": 10000}}})
+        return [{"id": 1, "state": {"bri": 0}}, {"id": 2, "state": {"bri": 5000}}]
+
+    mock_api.async_get_loads_state.side_effect = slow_loads_state
+
+    await coordinator.async_update_states()
+
+    assert coordinator.states[1] == {"bri": 10000}
+    assert coordinator.states[2] == {"bri": 5000}
+
+
+async def test_poll_overrides_ws_update_from_before_the_poll(coordinator, mock_api):
+    """An older WebSocket update does not shadow a later poll result."""
+    coordinator._states = {1: {"bri": 0}}
+    coordinator.ws_update_data({"load": {"id": 1, "state": {"bri": 10000}}})
+    mock_api.async_get_loads_state.return_value = [{"id": 1, "state": {"bri": 0}}]
+
+    await coordinator.async_update_states()
+
+    assert coordinator.states[1] == {"bri": 0}
+
+
+def test_async_update_load_state_updates_and_notifies(coordinator):
+    """A commanded change is merged into the state and pushed right away."""
+    coordinator._states = {1: {"bri": 0, "flags": {"over_current": False}}}
+    listener = MagicMock()
+    coordinator.async_add_listener(listener)
+
+    coordinator.async_update_load_state(1, {"bri": 10000})
+
+    assert coordinator.states[1] == {"bri": 10000, "flags": {"over_current": False}}
+    listener.assert_called_once()

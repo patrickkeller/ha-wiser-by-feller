@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
 
 from aiowiserbyfeller import Device, Load, Motor
@@ -82,7 +80,6 @@ class WiserRelayEntity(WiserEntity, CoverEntity):
 
         # There is no suitable default for "motor", so we use shade.
         self._attr_device_class = CoverDeviceClass.SHADE
-        self._tracking_task: asyncio.Task[None] | None = None
 
     @property
     def is_closed(self) -> bool | None:
@@ -94,17 +91,17 @@ class WiserRelayEntity(WiserEntity, CoverEntity):
     @property
     def is_moving(self) -> bool:
         """Return if the cover is moving or not."""
-        return "moving" in self._load.state and self._load.state["moving"] != "stop"
+        return (self._load.state or {}).get("moving", "stop") != "stop"
 
     @property
     def is_opening(self) -> bool:
         """Return if the cover is opening or not."""
-        return "moving" in self._load.state and self._load.state["moving"] == "up"
+        return (self._load.state or {}).get("moving", "stop") == "up"
 
     @property
     def is_closing(self) -> bool:
         """Return if the cover is closing or not."""
-        return "moving" in self._load.state and self._load.state["moving"] == "down"
+        return (self._load.state or {}).get("moving", "stop") == "down"
 
     async def async_stop_cover(self, **kwargs):
         """Stop the cover."""
@@ -113,60 +110,10 @@ class WiserRelayEntity(WiserEntity, CoverEntity):
     async def async_open_cover(self, **kwargs):
         """Open the cover."""
         await self._load.async_set_level(0)
-        self.start_tracking()
 
     async def async_close_cover(self, **kwargs):
         """Close cover."""
         await self._load.async_set_level(10000)
-        self.start_tracking()
-
-    def start_tracking(self) -> None:
-        """Disabled on this fork — movement tracking added load for no benefit.
-
-        Upstream's own note said the µGateway API "does not return an updated
-        position when polled during motion, so this whole tracking subroutine is
-        for nothing". On the weak µGateway v1 (firmware 5.x) it was actively
-        harmful: every cover movement spawned a task that polled
-        loads/{id}/state once per second, piling extra HTTP requests onto an
-        already-overwhelmed gateway and throwing "Server disconnected" errors
-        mid-motion. Live position updates come from the WebSocket instead; the
-        final position is corrected on the next coordinator poll.
-        """
-        return
-
-    async def _track_movement_loop(self) -> None:
-        """Keep updating load state while the cover is moving."""
-        self._is_tracking = True
-        try:
-            while True:
-                await asyncio.sleep(1)
-                _LOGGER.debug("Load #%s: Checking current position", self._load.id)
-                await self._load.async_refresh_state()
-                if not self.is_moving:
-                    return
-        except asyncio.CancelledError as e:
-            _LOGGER.debug(
-                "Load #%s: Checking current position: Tracking task cancelled: %s",
-                self._load.id,
-                e,
-            )
-        finally:
-            self._is_tracking = False
-            _LOGGER.debug("Load #%s: Tracking task stopped", self._load.id)
-
-    async def stop_tracking(self) -> None:
-        """Cancel the tracking task if running."""
-        if not self._tracking_task:
-            _LOGGER.debug("Load #%s: No tracking task running to stop", self._load.id)
-            return
-
-        _LOGGER.debug("Load #%s: Stopping tracking task", self._load.id)
-        self._tracking_task.cancel()
-
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._tracking_task
-
-        self._tracking_task = None
 
 
 class WiserCoverEntity(WiserRelayEntity, CoverEntity):
@@ -208,7 +155,6 @@ class WiserCoverEntity(WiserRelayEntity, CoverEntity):
         """Move the cover to a specific position."""
         level = cover_position_to_wiser(kwargs.get(ATTR_POSITION))
         await self._load.async_set_level(level)
-        self.start_tracking()
 
     async def async_stop_cover(self, **kwargs):
         """Stop the cover."""

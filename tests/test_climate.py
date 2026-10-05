@@ -219,7 +219,7 @@ async def test_climate_setup_skips_group_without_thermostat(
 
     mock_config_entry.add_to_hass(hass)
     with (
-        patch("custom_components.wiser_by_feller.Auth"),
+        patch("custom_components.wiser_by_feller.SerializedAuth"),
         patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
         patch(
             "custom_components.wiser_by_feller.WiserCoordinator",

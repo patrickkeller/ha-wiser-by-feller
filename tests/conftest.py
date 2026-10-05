@@ -167,7 +167,7 @@ async def setup_integration(hass, mock_config_entry, mock_coordinator):
     """Set up the integration with a fully mocked coordinator."""
     mock_config_entry.add_to_hass(hass)
     with (
-        patch("custom_components.wiser_by_feller.Auth"),
+        patch("custom_components.wiser_by_feller.SerializedAuth"),
         patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
         patch(
             "custom_components.wiser_by_feller.WiserCoordinator",

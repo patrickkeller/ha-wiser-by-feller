@@ -170,7 +170,7 @@ async def test_button_platform_creates_ping_entity_per_load(
 
     mock_config_entry.add_to_hass(hass)
     with (
-        patch("custom_components.wiser_by_feller.Auth"),
+        patch("custom_components.wiser_by_feller.SerializedAuth"),
         patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
         patch(
             "custom_components.wiser_by_feller.WiserCoordinator",

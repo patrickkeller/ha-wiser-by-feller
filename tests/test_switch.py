@@ -160,7 +160,7 @@ async def test_switch_platform_creates_one_entity_per_flag(
 
     mock_config_entry.add_to_hass(hass)
     with (
-        patch("custom_components.wiser_by_feller.Auth"),
+        patch("custom_components.wiser_by_feller.SerializedAuth"),
         patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
         patch(
             "custom_components.wiser_by_feller.WiserCoordinator",
@@ -189,7 +189,7 @@ async def test_switch_platform_creates_onoff_switch_entity(
 
     mock_config_entry.add_to_hass(hass)
     with (
-        patch("custom_components.wiser_by_feller.Auth"),
+        patch("custom_components.wiser_by_feller.SerializedAuth"),
         patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
         patch(
             "custom_components.wiser_by_feller.WiserCoordinator",
@@ -218,7 +218,7 @@ async def test_kind_light_onoff_load_not_in_switch_platform(
 
     mock_config_entry.add_to_hass(hass)
     with (
-        patch("custom_components.wiser_by_feller.Auth"),
+        patch("custom_components.wiser_by_feller.SerializedAuth"),
         patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
         patch(
             "custom_components.wiser_by_feller.WiserCoordinator",

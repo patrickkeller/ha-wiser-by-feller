@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from aiowiserbyfeller import Auth, UnsuccessfulRequest, WiserByFellerAPI
+from aiowiserbyfeller import UnsuccessfulRequest, WiserByFellerAPI
 from aiowiserbyfeller.enum import BlinkPattern
 from aiowiserbyfeller.util import parse_wiser_device_ref_c
 from homeassistant.components.light import ATTR_RGB_COLOR
@@ -28,6 +28,7 @@ from .const import (
     MIN_FIRMWARE_BUTTON_LED_OVERRIDE,
 )
 from .coordinator import WiserCoordinator
+from .gateway_auth import SerializedAuth
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -291,7 +292,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     session = async_get_clientsession(hass)
-    auth = Auth(session, entry.data["host"], token=entry.data["token"])
+    auth = SerializedAuth(session, entry.data["host"], token=entry.data["token"])
     api = WiserByFellerAPI(auth)
 
     wiser_coordinator = WiserCoordinator(
@@ -308,7 +309,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Local fork patch: Start the WebSocket only AFTER the (heavy) first refresh
     # so it doesn't compete with the initial per-device fetch. The WebSocket now
     # runs on all gateways including µGateway v1 (Gen A, firmware 5.x): keepalive
-    # pings are disabled (see NoKeepalivePingWebsocket) so the old firmware no
+    # pings are disabled (see GatewayWebsocket) so the old firmware no
     # longer ping-timeouts the connection into an endless reconnect churn. Because
     # the first refresh now succeeds, there are no setup retries leaking
     # connect() tasks. This restores real-time push (no more 30s update lag).

@@ -9,6 +9,7 @@ from homeassistant.components.light import (
     ATTR_COLOR_TEMP_KELVIN,
     ATTR_RGBW_COLOR,
 )
+import pytest
 
 from custom_components.wiser_by_feller.coordinator import WiserCoordinator
 from custom_components.wiser_by_feller.light import (
@@ -247,7 +248,7 @@ async def test_impulse_onoff_skipped_from_light(
 
     mock_config_entry.add_to_hass(hass)
     with (
-        patch("custom_components.wiser_by_feller.Auth"),
+        patch("custom_components.wiser_by_feller.SerializedAuth"),
         patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
         patch(
             "custom_components.wiser_by_feller.WiserCoordinator",
@@ -260,3 +261,59 @@ async def test_impulse_onoff_skipped_from_light(
     # No light entity should have been registered
     light_states = hass.states.async_entity_ids("light")
     assert len(light_states) == 0
+
+
+# ── published state after commands ───────────────────────────────────────────
+
+
+async def test_dim_turn_on_with_brightness_publishes_that_brightness():
+    """Setting a brightness publishes it (it used to be clobbered with bri=100)."""
+    load = _make_load(Dim, raw_state={"bri": 0, "flags": {}})
+    coord = _make_coordinator()
+    coord.states = {1: {"bri": 0, "flags": {}}}
+    entity = WiserDimEntity(coord, load, _make_device(), None)
+
+    await entity.async_turn_on(**{ATTR_BRIGHTNESS: 128})
+
+    load.async_set_bri.assert_called_once_with(brightness_to_wiser(128))
+    coord.async_update_load_state.assert_called_once_with(
+        1, {"bri": brightness_to_wiser(128)}
+    )
+
+
+async def test_dim_plain_turn_on_publishes_on_state():
+    """A plain switch-on publishes an 'on' state right away."""
+    load = _make_load(Dim, raw_state={"bri": 0})
+    coord = _make_coordinator()
+    coord.states = {1: {"bri": 0}}
+    entity = WiserDimEntity(coord, load, _make_device(), None)
+
+    await entity.async_turn_on()
+
+    coord.async_update_load_state.assert_called_once_with(1, {"bri": 10000})
+
+
+async def test_onoff_turn_off_publishes_off_state():
+    """Turning off publishes bri=0 so the UI doesn't flip back."""
+    load = _make_load(OnOff, raw_state={"bri": 10000})
+    coord = _make_coordinator()
+    coord.states = {1: {"bri": 10000}}
+    entity = WiserOnOffEntity(coord, load, _make_device(), None)
+
+    await entity.async_turn_off()
+
+    coord.async_update_load_state.assert_called_once_with(1, {"bri": 0})
+
+
+async def test_no_state_published_when_command_fails():
+    """A failed command must not publish an optimistic state."""
+    load = _make_load(OnOff, raw_state={"bri": 0})
+    load.async_switch_on.side_effect = RuntimeError("gateway error")
+    coord = _make_coordinator()
+    coord.states = {1: {"bri": 0}}
+    entity = WiserOnOffEntity(coord, load, _make_device(), None)
+
+    with pytest.raises(RuntimeError):
+        await entity.async_turn_on()
+
+    coord.async_update_load_state.assert_not_called()

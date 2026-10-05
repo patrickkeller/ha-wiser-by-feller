@@ -59,6 +59,17 @@ async def async_setup_entry(
         async_add_entities(entities)
 
 
+def _bri_or_full(raw_state: dict | None) -> int:
+    """Return the current brightness, or full brightness if the load is off.
+
+    Also the best guess after a plain switch-on (button click): the device
+    applies its configured turn-on behavior (full or last value), which we
+    can't know; the WebSocket echo corrects it within a moment.
+    """
+    bri = (raw_state or {}).get("bri")
+    return bri or 10000
+
+
 class WiserOnOffEntity(WiserEntity, LightEntity):
     """Entity class for simple non-dimmable lights."""
 
@@ -85,16 +96,12 @@ class WiserOnOffEntity(WiserEntity, LightEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on device load."""
         await self._load.async_switch_on()
-
-        # Prevent state showing as on - off - on due to slightly delayed websocket update
-        self._load.raw_state["bri"] = 100
+        self._async_publish_state(bri=10000)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off device load."""
         await self._load.async_switch_off()
-
-        # Prevent state showing as off - on - off due to slightly delayed websocket update
-        self._load.raw_state["bri"] = 0
+        self._async_publish_state(bri=0)
 
 
 class WiserDimEntity(WiserEntity, LightEntity):
@@ -129,21 +136,18 @@ class WiserDimEntity(WiserEntity, LightEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on device load."""
         if ATTR_BRIGHTNESS in kwargs:
-            await self._load.async_set_bri(
-                brightness_to_wiser(kwargs.get(ATTR_BRIGHTNESS, 255))
-            )
+            bri = brightness_to_wiser(kwargs.get(ATTR_BRIGHTNESS, 255))
+            await self._load.async_set_bri(bri)
         else:
             await self._load.async_switch_on()
+            bri = _bri_or_full(self._load.raw_state)
 
-        # Prevent state showing as on - off - on due to slightly delayed websocket update
-        self._load.raw_state["bri"] = 100
+        self._async_publish_state(bri=bri)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off device load."""
         await self._load.async_switch_off()
-
-        # Prevent state showing as off - on - off due to slightly delayed websocket update
-        self._load.raw_state["bri"] = 0
+        self._async_publish_state(bri=0)
 
 
 class WiserDimTwEntity(WiserEntity, LightEntity):
@@ -180,25 +184,23 @@ class WiserDimTwEntity(WiserEntity, LightEntity):
         if bri_kw is not None and ct_kw is not None:
             bri = brightness_to_wiser(bri_kw)
             await self._load.async_set_bri_ct(bri, ct_kw)
-            self._load.raw_state["bri"] = bri
-            self._load.raw_state["ct"] = ct_kw
+            self._async_publish_state(bri=bri, ct=ct_kw)
         elif ct_kw is not None:
-            current_bri = self._load.raw_state.get("bri") or 10000
+            current_bri = _bri_or_full(self._load.raw_state)
             await self._load.async_set_bri_ct(current_bri, ct_kw)
-            self._load.raw_state["bri"] = current_bri
-            self._load.raw_state["ct"] = ct_kw
+            self._async_publish_state(bri=current_bri, ct=ct_kw)
         elif bri_kw is not None:
             bri = brightness_to_wiser(bri_kw)
             await self._load.async_set_bri(bri)
-            self._load.raw_state["bri"] = bri
+            self._async_publish_state(bri=bri)
         else:
             await self._load.async_switch_on()
-            self._load.raw_state["bri"] = 100
+            self._async_publish_state(bri=_bri_or_full(self._load.raw_state))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off device load."""
         await self._load.async_switch_off()
-        self._load.raw_state["bri"] = 0
+        self._async_publish_state(bri=0)
 
 
 class WiserDimRgbwEntity(WiserEntity, LightEntity):
@@ -239,23 +241,19 @@ class WiserDimRgbwEntity(WiserEntity, LightEntity):
             bri = (
                 brightness_to_wiser(bri_kw)
                 if bri_kw is not None
-                else (self._load.raw_state.get("bri") or 10000)
+                else _bri_or_full(self._load.raw_state)
             )
             await self._load.async_set_bri_rgbw(bri, r, g, b, w)
-            self._load.raw_state["bri"] = bri
-            self._load.raw_state["red"] = r
-            self._load.raw_state["green"] = g
-            self._load.raw_state["blue"] = b
-            self._load.raw_state["white"] = w
+            self._async_publish_state(bri=bri, red=r, green=g, blue=b, white=w)
         elif bri_kw is not None:
             bri = brightness_to_wiser(bri_kw)
             await self._load.async_set_bri(bri)
-            self._load.raw_state["bri"] = bri
+            self._async_publish_state(bri=bri)
         else:
             await self._load.async_switch_on()
-            self._load.raw_state["bri"] = 100
+            self._async_publish_state(bri=_bri_or_full(self._load.raw_state))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off device load."""
         await self._load.async_switch_off()
-        self._load.raw_state["bri"] = 0
+        self._async_publish_state(bri=0)

@@ -78,16 +78,12 @@ class WiserOnOffSwitchEntity(WiserEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on device load."""
         await self._load.async_switch_on()
-
-        # Prevent state showing as on - off - on due to slightly delayed websocket update
-        self._load.raw_state["bri"] = 100
+        self._async_publish_state(bri=10000)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off device load."""
         await self._load.async_switch_off()
-
-        # Prevent state showing as off - on - off due to slightly delayed websocket update
-        self._load.raw_state["bri"] = 0
+        self._async_publish_state(bri=0)
 
 
 class WiserSystemFlag(CoordinatorEntity["WiserCoordinator"], SwitchEntity):

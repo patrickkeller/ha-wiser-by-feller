@@ -44,7 +44,7 @@ async def test_setup_entry_keeps_existing_import_user(
         data={**mock_config_entry.data, CONF_IMPORTUSER: "installer"},
     )
     with (
-        patch("custom_components.wiser_by_feller.Auth"),
+        patch("custom_components.wiser_by_feller.SerializedAuth"),
         patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
         patch(
             "custom_components.wiser_by_feller.WiserCoordinator",
@@ -67,14 +67,14 @@ async def test_setup_entry_starts_ws_init_on_gen_a(
 ):
     """Gen A (API v5, firmware 5.x) also starts the WebSocket.
 
-    Keepalive pings are disabled (NoKeepalivePingWebsocket) so the old firmware
+    Keepalive pings are disabled (GatewayWebsocket) so the old firmware
     no longer drops the connection, restoring real-time push. See
     async_setup_entry.
     """
     mock_coordinator.is_gen_b = False
     mock_config_entry.add_to_hass(hass)
     with (
-        patch("custom_components.wiser_by_feller.Auth"),
+        patch("custom_components.wiser_by_feller.SerializedAuth"),
         patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
         patch(
             "custom_components.wiser_by_feller.WiserCoordinator",
@@ -117,7 +117,7 @@ async def test_setup_gateway_registers_device(
     """async_setup_gateway creates a device registry entry for the µGateway."""
     mock_config_entry.add_to_hass(hass)
     with (
-        patch("custom_components.wiser_by_feller.Auth"),
+        patch("custom_components.wiser_by_feller.SerializedAuth"),
         patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
         patch(
             "custom_components.wiser_by_feller.WiserCoordinator",
@@ -429,7 +429,7 @@ async def test_button_service_requires_gateway_when_multiple(
     )
     second.add_to_hass(hass)
     with (
-        patch("custom_components.wiser_by_feller.Auth"),
+        patch("custom_components.wiser_by_feller.SerializedAuth"),
         patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
         patch(
             "custom_components.wiser_by_feller.WiserCoordinator",

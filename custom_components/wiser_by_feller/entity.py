@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from aiowiserbyfeller import Device, Load
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -105,5 +107,19 @@ class WiserEntity(CoordinatorEntity["WiserCoordinator"]):
     def _handle_coordinator_update(self) -> None:
         """Handle updated entity data from the coordinator."""
         if self._load is not None and self.coordinator.states is not None:
-            self._load.raw_state = self.coordinator.states.get(self._load.id)
+            # Keep the last known state if a poll response lacks this load.
+            self._load.raw_state = self.coordinator.states.get(
+                self._load.id, self._load.raw_state
+            )
         self.async_write_ha_state()
+
+    @callback
+    def _async_publish_state(self, **changes: Any) -> None:
+        """Show a just-commanded load state right away.
+
+        Without this the UI kept the old state until the WebSocket echo arrived
+        (or, with the WebSocket down, until the next poll — minutes later). The
+        state goes through the coordinator so other updates don't revert it.
+        """
+        assert self._load is not None
+        self.coordinator.async_update_load_state(self._load.id, changes)

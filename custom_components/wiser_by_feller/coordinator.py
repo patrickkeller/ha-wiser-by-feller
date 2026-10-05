@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 import logging
+import time
 from types import MappingProxyType
 from typing import Any
 
@@ -27,7 +28,7 @@ from aiowiserbyfeller.const import LOAD_SUBTYPE_ONOFF_DTO, LOAD_TYPE_ONOFF
 from aiowiserbyfeller.enum import BlinkPattern
 import aiowiserbyfeller.errors
 from aiowiserbyfeller.util import parse_wiser_device_ref_c
-from homeassistant.core import ServiceCall
+from homeassistant.core import ServiceCall, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryError,
@@ -47,9 +48,18 @@ from .const import (
 )
 from .exceptions import UnexpectedGatewayResult
 from .util import resolve_device_name, rgb_tuple_to_hex
-from .websocket import NoKeepalivePingWebsocket
+from .websocket import GatewayWebsocket
 
 _LOGGER = logging.getLogger(__name__)
+
+# Per poll step. Each request is bounded by gateway_auth.REQUEST_TIMEOUT (30s);
+# the extra room covers waiting for one in-flight command, as requests to the
+# gateway are serialized.
+POLL_STEP_TIMEOUT = 60
+
+# A gateway boot time derived from its uptime can be up to one request timeout
+# late (uptime is sampled before the slow response arrives); tolerate that much.
+REBOOT_DETECTION_MARGIN = 30
 
 
 def get_unique_id(device: Device, load: Load | None) -> str:
@@ -97,9 +107,17 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
         self._gateway_info: dict[str, Any] | None = None
         self._managed_buttons: dict[int, Any] | None = None
         self._findme_button_future: asyncio.Future | None = None
-        self._ws = NoKeepalivePingWebsocket(host, token, _LOGGER)
+        self._ws = GatewayWebsocket(host, token, _LOGGER)
         self._ws.subscribe(self.ws_update_data)
         self._ws_started = False
+        # Monotonic time of the last WebSocket update / command per state id,
+        # so a slow poll's older snapshot does not overwrite newer state.
+        self._state_updated_at: dict[int, float] = {}
+        # Gateway boot time estimated from the last poll's uptime, and the
+        # boot time of the last reboot detected from it (monotonic clock).
+        self._gateway_boot_estimate: float | None = None
+        self._gateway_booted_at: float | None = None
+        self._gateway_info_stale = False
 
     @property
     def loads(self) -> dict[int, Load] | None:
@@ -422,15 +440,16 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
                 err,
             )
         finally:
-            self._ensure_websocket()
+            await self._ensure_websocket()
 
-    def _ensure_websocket(self) -> None:
+    async def _ensure_websocket(self) -> None:
         """Keep the WebSocket (primary update source) alive.
 
         Only acts once ws_init() has started it (after the first refresh, so it
         never competes with the heavy initial fetch). Restarts the connection if
-        the background task has ended — the ping-less link rarely drops, but if
-        the gateway reboots enough times the library gives up.
+        the background task has ended, or if the gateway rebooted after the
+        connection was opened: without keepalive pings such a connection is
+        half-open — it looks alive but never delivers another message.
         """
         if not self._ws_started:
             return
@@ -438,6 +457,18 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
             _LOGGER.info("WebSocket to µGateway not running; reconnecting.")
             self._ws.reset_error_count()
             self._ws.init()
+        elif self._ws_predates_gateway_boot():
+            _LOGGER.info(
+                "µGateway rebooted after the WebSocket was opened; reconnecting."
+            )
+            await self._ws.async_restart()
+
+    def _ws_predates_gateway_boot(self) -> bool:
+        """Return True if the current WebSocket connection was opened before the gateway booted."""
+        connected_since = self._ws.connected_since
+        if connected_since is None or self._gateway_booted_at is None:
+            return False
+        return connected_since < self._gateway_booted_at - REBOOT_DETECTION_MARGIN
 
     async def _fetch_data(self) -> None:
         """Fetch data from API endpoint.
@@ -449,19 +480,22 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
             _LOGGER.debug("Attempting to update data from µGateway...")
             # Note: asyncio.TimeoutError and aiohttp.ClientError are already
             # handled by the data update coordinator.
-            # Local fork patch: per-step timeout is 30s (was 10s) because
-            # µGateway v1 firmware 5.x is slow — even trivial calls can take
-            # 6-8s (whole polls 5-17s). A tighter limit tripped constantly and
-            # briefly marked every entity unavailable on each slow poll.
-            async with asyncio.timeout(30):
-                await self.async_update_gateway_info()
+            # Local fork patch: per-step timeout is POLL_STEP_TIMEOUT (was 10s)
+            # because µGateway v1 firmware 5.x is slow — even trivial calls can
+            # take 6-8s (whole polls 5-17s). A tighter limit tripped constantly
+            # and briefly marked every entity unavailable on each slow poll.
+            # Gateway info (firmware/API version) is static: fetch it once and
+            # again only after a reboot (firmware update), not on every poll.
+            if self._gateway_info is None or self._gateway_info_stale:
+                async with asyncio.timeout(POLL_STEP_TIMEOUT):
+                    await self.async_update_gateway_info()
 
             if self._loads is None:
-                async with asyncio.timeout(30):
+                async with asyncio.timeout(POLL_STEP_TIMEOUT):
                     await self.async_update_loads()
 
             if self._rooms is None:
-                async with asyncio.timeout(30):
+                async with asyncio.timeout(POLL_STEP_TIMEOUT):
                     await self.async_update_rooms()
 
             if self._devices is None:
@@ -474,38 +508,38 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
                     await self.async_update_devices()
 
             if self._jobs is None:
-                async with asyncio.timeout(30):
+                async with asyncio.timeout(POLL_STEP_TIMEOUT):
                     await self.async_update_jobs()
 
             if self._scenes is None:
-                async with asyncio.timeout(30):
+                async with asyncio.timeout(POLL_STEP_TIMEOUT):
                     await self.async_update_scenes()
 
             if self._system_flags is None:
-                async with asyncio.timeout(30):
+                async with asyncio.timeout(POLL_STEP_TIMEOUT):
                     await self.async_update_system_flags()
 
             if self._sensors is None and self.gateway_supports_sensors:
-                async with asyncio.timeout(30):
+                async with asyncio.timeout(POLL_STEP_TIMEOUT):
                     await self.async_update_sensors()
 
             if self._hvac_groups is None and self.gateway_supports_hvac_groups:
-                async with asyncio.timeout(30):
+                async with asyncio.timeout(POLL_STEP_TIMEOUT):
                     await self.async_update_hvac_groups()
 
             if self._managed_buttons is None:
                 self._managed_buttons = {}
                 if self.supports_feature(MIN_FIRMWARE_MANAGED_BUTTONS):
                     try:
-                        async with asyncio.timeout(30):
+                        async with asyncio.timeout(POLL_STEP_TIMEOUT):
                             await self.async_update_managed_buttons()
                     except Exception as err:  # noqa: BLE001
                         _LOGGER.warning("Failed to load managed buttons: %s", err)
 
-            async with asyncio.timeout(30):
+            async with asyncio.timeout(POLL_STEP_TIMEOUT):
                 await self.async_update_states()
 
-            async with asyncio.timeout(30):
+            async with asyncio.timeout(POLL_STEP_TIMEOUT):
                 await self.async_update_system_health()
 
             _LOGGER.debug("Successfully updated data from µGateway.")
@@ -550,21 +584,21 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
 
         if "load" in data:
             _LOGGER.debug("Websocket load data update received: %s", data["load"])
-            self._states[data["load"]["id"]] = data["load"]["state"]
+            self._store_state(data["load"]["id"], data["load"]["state"])
         elif "sensor" in data:
             _LOGGER.debug("Websocket sensor data update received: %s", data["sensor"])
             sid = data["sensor"]["id"]
             # The WebSocket payload is partial (only id + value). Merge into the
             # existing full raw_data so type/device/unit fields are preserved.
             if sid in self._states and isinstance(self._states[sid], dict):
-                self._states[sid] = {**self._states[sid], **data["sensor"]}
+                self._store_state(sid, {**self._states[sid], **data["sensor"]})
             else:
-                self._states[sid] = data["sensor"]
+                self._store_state(sid, data["sensor"])
         elif "hvacgroup" in data:
             _LOGGER.debug(
                 "Websocket hvacgroup data update received: %s", data["hvacgroup"]
             )
-            self._states[data["hvacgroup"]["id"]] = data["hvacgroup"]["state"]
+            self._store_state(data["hvacgroup"]["id"], data["hvacgroup"]["state"])
         elif "westgroup" in data:
             # This would probably send updates when Wiser WEST group events happen, e.g. when a cover
             # is retracted due to a wind or rain event. Data updates are handled in the sensor domain
@@ -597,6 +631,25 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
             _LOGGER.debug("Unsupported websocket data update received: %s", data)
 
         self.async_set_updated_data(None)
+
+    @callback
+    def async_update_load_state(self, load_id: int, changes: dict) -> None:
+        """Apply a load state change known from a successful command.
+
+        Entities call this right after commanding a load so the UI reflects the
+        change immediately instead of waiting for the WebSocket echo (or, if the
+        WebSocket is down, the next poll). The WebSocket update overrides it.
+        """
+        if self._states is None:
+            return
+        self._store_state(load_id, {**(self._states.get(load_id) or {}), **changes})
+        self.async_update_listeners()
+
+    def _store_state(self, state_id: int, state: Any) -> None:
+        """Store a live state, newer than any poll snapshot already in flight."""
+        assert self._states is not None
+        self._states[state_id] = state
+        self._state_updated_at[state_id] = time.monotonic()
 
     async def async_update_loads(self) -> None:
         """Update Wiser device loads from µGateway."""
@@ -716,6 +769,7 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
 
     async def async_update_states(self) -> None:
         """Update Wiser device states from µGateway."""
+        started = time.monotonic()
         loads = {
             load.get("id"): load.get("state")
             for load in await self._api.async_get_loads_state()
@@ -738,7 +792,22 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
             else {}
         )
 
-        self._states = loads | sensors | hvac_groups
+        states = loads | sensors | hvac_groups
+
+        # The gateway takes seconds to answer. A WebSocket update or command
+        # that arrived meanwhile is newer than this snapshot: keep it, or the
+        # entity would show a stale state until that load changes again.
+        if self._states is not None:
+            for state_id, updated_at in self._state_updated_at.items():
+                if updated_at >= started and state_id in self._states:
+                    states[state_id] = self._states[state_id]
+        self._state_updated_at = {
+            state_id: updated_at
+            for state_id, updated_at in self._state_updated_at.items()
+            if updated_at >= started
+        }
+
+        self._states = states
 
     async def async_update_jobs(self) -> None:
         """Update Wiser jobs from µGateway."""
@@ -783,10 +852,28 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
         _LOGGER.debug("Attempting to update system health from µGateway...")
         self._system_health = await self._api.async_get_system_health()
 
+        uptime = self._system_health.get("uptime") if self._system_health else None
+        if isinstance(uptime, int | float):
+            # Compare boot times, not uptimes: with polls hours apart (the
+            # WebSocket postpones them) a second reboot can show a larger
+            # uptime than the last poll saw. Two estimates of the same boot
+            # differ by at most 2 x REBOOT_DETECTION_MARGIN.
+            boot_estimate = time.monotonic() - uptime
+            previous = self._gateway_boot_estimate
+            if (
+                previous is not None
+                and boot_estimate > previous + 2 * REBOOT_DETECTION_MARGIN
+            ):
+                _LOGGER.info("µGateway rebooted (uptime %s s)", uptime)
+                self._gateway_booted_at = boot_estimate
+                self._gateway_info_stale = True  # firmware may have changed
+            self._gateway_boot_estimate = boot_estimate
+
     async def async_update_gateway_info(self) -> None:
         """Update Wiser gateway info from µGateway."""
         _LOGGER.debug("Attempting to update µGateway info...")
         self._gateway_info = await self._api.async_get_info_debug()
+        self._gateway_info_stale = False
 
     async def async_is_onoff_impulse_load(self, load: Load) -> bool:
         """Check if on/off load is of subtype impulse.
