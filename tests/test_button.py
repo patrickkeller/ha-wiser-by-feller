@@ -1,10 +1,11 @@
 """Tests for button platform entities."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from aiowiserbyfeller import HvacGroup, Load, OnOff
 from aiowiserbyfeller.const import BUTTON_ON, EVENT_CLICK
 from aiowiserbyfeller.enum import BlinkPattern
+import pytest
 
 from custom_components.wiser_by_feller.button import (
     WiserClimatePingEntity,
@@ -156,6 +157,7 @@ def test_climate_ping_unique_id_has_hvac_group_identify():
 # ── button platform setup ─────────────────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("gateway_patches")
 async def test_button_platform_creates_ping_entity_per_load(
     hass, mock_config_entry, mock_coordinator
 ):
@@ -169,16 +171,8 @@ async def test_button_platform_creates_ping_entity_per_load(
     mock_coordinator.async_is_onoff_impulse_load = AsyncMock(return_value=False)
 
     mock_config_entry.add_to_hass(hass)
-    with (
-        patch("custom_components.wiser_by_feller.SerializedAuth"),
-        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
-        patch(
-            "custom_components.wiser_by_feller.WiserCoordinator",
-            return_value=mock_coordinator,
-        ),
-    ):
-        await hass.config_entries.async_setup(mock_config_entry.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
 
     button_states = hass.states.async_entity_ids("button")
     assert len(button_states) >= 1

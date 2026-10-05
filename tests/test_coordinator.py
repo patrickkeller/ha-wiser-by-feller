@@ -22,7 +22,10 @@ from custom_components.wiser_by_feller.const import (
     DOMAIN,
     OPTIONS_ALLOW_MISSING_GATEWAY_DATA,
 )
-from custom_components.wiser_by_feller.coordinator import WiserCoordinator
+from custom_components.wiser_by_feller.coordinator import (
+    GatewayBootTracker,
+    WiserCoordinator,
+)
 from custom_components.wiser_by_feller.exceptions import UnexpectedGatewayResult
 
 MOCK_HOST = "192.168.1.100"
@@ -919,3 +922,16 @@ def test_async_update_load_state_updates_and_notifies(coordinator):
 
     assert coordinator.states[1] == {"bri": 10000, "flags": {"over_current": False}}
     listener.assert_called_once()
+
+
+def test_boot_tracker_ignores_jitter_of_the_same_boot():
+    """Latency jitter between two readings of the same boot is not a reboot."""
+    tracker = GatewayBootTracker()
+    with patch("custom_components.wiser_by_feller.coordinator.time") as mock_time:
+        mock_time.monotonic.return_value = 10_000
+        assert tracker.update(5_000) is False
+        mock_time.monotonic.return_value = 10_330
+        assert tracker.update(5_300) is False  # boot estimate 30 s later
+
+    assert tracker.booted_at is None
+    assert tracker.predates_last_boot(1.0) is False

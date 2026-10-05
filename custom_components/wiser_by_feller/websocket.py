@@ -37,6 +37,7 @@ at 2.2.1) — re-check it on a library bump.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Coroutine
 import contextlib
 import json
 import socket
@@ -84,9 +85,19 @@ def enable_tcp_keepalive(sock: socket.socket | None) -> None:
 class GatewayWebsocket(Websocket):
     """WebSocket to the µGateway that detects dead connections and can be restarted."""
 
-    def __init__(self, *args, **kwargs) -> None:
-        """Track the background connect() task so it can be cancelled/restarted."""
+    def __init__(
+        self,
+        *args,
+        create_task: Callable[[Coroutine], asyncio.Task] = asyncio.create_task,
+        **kwargs,
+    ) -> None:
+        """Track the background connect() task so it can be cancelled/restarted.
+
+        ``create_task`` lets Home Assistant own the task (see coordinator), so
+        it is tracked and cancelled on shutdown like any HA background task.
+        """
         super().__init__(*args, **kwargs)
+        self._create_task = create_task
         self._task: asyncio.Task[None] | None = None
         self._connected_since: float | None = None
         # Serializes close/restart: the watchdog, the coordinator's poll and an
@@ -103,7 +114,7 @@ class GatewayWebsocket(Websocket):
     def init(self) -> None:
         """Start the background connect loop, tracking the task."""
         self._closed = False
-        self._task = asyncio.create_task(self.connect())
+        self._task = self._create_task(self.connect())
 
     def is_running(self) -> bool:
         """Return True while the background connect() task is alive."""

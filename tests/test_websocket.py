@@ -278,3 +278,23 @@ async def test_concurrent_restarts_leave_a_single_connect_loop():
         assert alive == [ws._task]
 
         await ws.async_close()
+
+
+async def test_connect_loop_runs_in_the_given_task_factory():
+    """The connect loop is started via the injected factory (HA background task)."""
+    created = []
+
+    def factory(coro):
+        task = asyncio.get_running_loop().create_task(coro)
+        created.append(task)
+        return task
+
+    ws = GatewayWebsocket("host", "token", MagicMock(), create_task=factory)
+    ws._watchdog = MagicMock()
+    ws._watchdog.trigger = AsyncMock()
+
+    with patch.object(ws, "connect", AsyncMock()):
+        ws.init()
+        await asyncio.sleep(0)
+
+    assert created == [ws._task]

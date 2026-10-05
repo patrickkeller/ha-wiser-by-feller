@@ -133,6 +133,7 @@ open htmlcov/index.html
 - **`mock_config_entry`** — a `MockConfigEntry` pre-configured for the `wiser_by_feller` domain
 - **`mock_gateway`** — a `MagicMock` representing the µGateway device with realistic string attributes
 - **`mock_coordinator`** — a `MagicMock(spec=WiserCoordinator)` with all data stores pre-populated as empty dicts/lists; tests override individual stores as needed
+- **`gateway_patches`** — patches `SerializedAuth`, `WiserByFellerAPI` and `WiserCoordinator` so a config entry sets up with `mock_coordinator`
 - **`setup_integration`** — calls `hass.config_entries.async_setup(...)` with the mocked coordinator and returns the loaded config entry
 
 For unit tests that don't need a full HA stack (e.g. entity property tests), instantiate entity classes directly — it's faster and simpler.
@@ -141,7 +142,7 @@ For unit tests that don't need a full HA stack (e.g. entity property tests), ins
 
 - Use `MagicMock(spec=<ApiClass>)` for load/device/sensor objects; set only the attributes your test exercises.
 - Always set `load.name` to a plain string — `resolve_device_name()` reads it and the HA device registry will reject a `MagicMock` value during teardown.
-- For full-stack platform tests (those that call `hass.config_entries.async_setup`), use the `mock_config_entry` and `mock_coordinator` fixtures and patch `SerializedAuth`, `WiserByFellerAPI`, and `WiserCoordinator` in `custom_components.wiser_by_feller`.
+- For full-stack platform tests (those that call `hass.config_entries.async_setup`), use the `mock_config_entry` and `mock_coordinator` fixtures together with `gateway_patches` (e.g. `@pytest.mark.usefixtures("gateway_patches")`), which patches `SerializedAuth`, `WiserByFellerAPI`, and `WiserCoordinator` in `custom_components.wiser_by_feller`. The `setup_integration` fixture does all of this and sets up the entry.
 
 ## Before committing
 

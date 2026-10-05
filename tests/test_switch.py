@@ -1,9 +1,10 @@
 """Tests for switch platform entities (WiserSystemFlag, WiserOnOffSwitchEntity)."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from aiowiserbyfeller import OnOff, SystemFlag
 from aiowiserbyfeller.const import KIND_LIGHT, KIND_SWITCH
+import pytest
 
 from custom_components.wiser_by_feller.coordinator import WiserCoordinator
 from custom_components.wiser_by_feller.switch import WiserSystemFlag
@@ -150,6 +151,7 @@ def test_entity_name_matches_flag_name():
 # ── platform setup creates one entity per flag ────────────────────────────────
 
 
+@pytest.mark.usefixtures("gateway_patches")
 async def test_switch_platform_creates_one_entity_per_flag(
     hass, mock_config_entry, mock_coordinator
 ):
@@ -159,21 +161,14 @@ async def test_switch_platform_creates_one_entity_per_flag(
     mock_coordinator.system_flags = [flag1, flag2]
 
     mock_config_entry.add_to_hass(hass)
-    with (
-        patch("custom_components.wiser_by_feller.SerializedAuth"),
-        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
-        patch(
-            "custom_components.wiser_by_feller.WiserCoordinator",
-            return_value=mock_coordinator,
-        ),
-    ):
-        await hass.config_entries.async_setup(mock_config_entry.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
 
     switch_states = hass.states.async_entity_ids("switch")
     assert len(switch_states) == 2
 
 
+@pytest.mark.usefixtures("gateway_patches")
 async def test_switch_platform_creates_onoff_switch_entity(
     hass, mock_config_entry, mock_coordinator
 ):
@@ -188,21 +183,14 @@ async def test_switch_platform_creates_onoff_switch_entity(
     mock_coordinator.system_flags = []
 
     mock_config_entry.add_to_hass(hass)
-    with (
-        patch("custom_components.wiser_by_feller.SerializedAuth"),
-        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
-        patch(
-            "custom_components.wiser_by_feller.WiserCoordinator",
-            return_value=mock_coordinator,
-        ),
-    ):
-        await hass.config_entries.async_setup(mock_config_entry.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
 
     switch_states = hass.states.async_entity_ids("switch")
     assert len(switch_states) == 1
 
 
+@pytest.mark.usefixtures("gateway_patches")
 async def test_kind_light_onoff_load_not_in_switch_platform(
     hass, mock_config_entry, mock_coordinator
 ):
@@ -217,16 +205,8 @@ async def test_kind_light_onoff_load_not_in_switch_platform(
     mock_coordinator.system_flags = []
 
     mock_config_entry.add_to_hass(hass)
-    with (
-        patch("custom_components.wiser_by_feller.SerializedAuth"),
-        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
-        patch(
-            "custom_components.wiser_by_feller.WiserCoordinator",
-            return_value=mock_coordinator,
-        ),
-    ):
-        await hass.config_entries.async_setup(mock_config_entry.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
 
     switch_states = hass.states.async_entity_ids("switch")
     assert len(switch_states) == 0

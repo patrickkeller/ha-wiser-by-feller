@@ -1,8 +1,9 @@
 """Tests for scene platform entities."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from aiowiserbyfeller import Scene
+import pytest
 
 from custom_components.wiser_by_feller.coordinator import WiserCoordinator
 from custom_components.wiser_by_feller.scene import WiserSceneEntity
@@ -80,6 +81,7 @@ async def test_activate_calls_job_async_trigger_all():
 # ── setup: scenes without jobs are skipped ────────────────────────────────────
 
 
+@pytest.mark.usefixtures("gateway_patches")
 async def test_scenes_without_jobs_excluded(hass, mock_config_entry, mock_coordinator):
     """Scenes whose job ID is not in coordinator.jobs are not created as entities."""
     scene_with_job = _make_scene(scene_id=1, job_id=100)
@@ -90,21 +92,14 @@ async def test_scenes_without_jobs_excluded(hass, mock_config_entry, mock_coordi
     mock_coordinator.jobs = {100: job}  # only job 100
 
     mock_config_entry.add_to_hass(hass)
-    with (
-        patch("custom_components.wiser_by_feller.SerializedAuth"),
-        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
-        patch(
-            "custom_components.wiser_by_feller.WiserCoordinator",
-            return_value=mock_coordinator,
-        ),
-    ):
-        await hass.config_entries.async_setup(mock_config_entry.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
 
     scene_states = hass.states.async_entity_ids("scene")
     assert len(scene_states) == 1
 
 
+@pytest.mark.usefixtures("gateway_patches")
 async def test_all_scenes_with_jobs_created(hass, mock_config_entry, mock_coordinator):
     """One scene entity is created for each scene that has a corresponding job."""
     scenes = {i: _make_scene(scene_id=i, job_id=i + 100) for i in range(1, 4)}
@@ -114,16 +109,8 @@ async def test_all_scenes_with_jobs_created(hass, mock_config_entry, mock_coordi
     mock_coordinator.jobs = jobs
 
     mock_config_entry.add_to_hass(hass)
-    with (
-        patch("custom_components.wiser_by_feller.SerializedAuth"),
-        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
-        patch(
-            "custom_components.wiser_by_feller.WiserCoordinator",
-            return_value=mock_coordinator,
-        ),
-    ):
-        await hass.config_entries.async_setup(mock_config_entry.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
 
     scene_states = hass.states.async_entity_ids("scene")
     assert len(scene_states) == 3

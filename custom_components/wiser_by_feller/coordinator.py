@@ -62,6 +62,37 @@ POLL_STEP_TIMEOUT = 60
 REBOOT_DETECTION_MARGIN = 30
 
 
+class GatewayBootTracker:
+    """Detect µGateway reboots from the uptime it reports (system health).
+
+    Compares boot times, not uptimes: with polls hours apart (the WebSocket
+    postpones them) a second reboot can show a larger uptime than the last
+    poll saw. A boot time estimated from uptime can be up to
+    REBOOT_DETECTION_MARGIN late, so two estimates of the same boot differ by
+    at most twice that.
+    """
+
+    def __init__(self) -> None:
+        """Initialize without any reading."""
+        self._boot_estimate: float | None = None
+        self.booted_at: float | None = None
+
+    def update(self, uptime: float) -> bool:
+        """Record an uptime reading; return True if the gateway rebooted since the last one."""
+        boot_estimate = time.monotonic() - uptime
+        previous, self._boot_estimate = self._boot_estimate, boot_estimate
+        if previous is None or boot_estimate <= previous + 2 * REBOOT_DETECTION_MARGIN:
+            return False
+        self.booted_at = boot_estimate
+        return True
+
+    def predates_last_boot(self, since: float | None) -> bool:
+        """Return True if the monotonic time ``since`` lies before the last detected reboot."""
+        if since is None or self.booted_at is None:
+            return False
+        return since < self.booted_at - REBOOT_DETECTION_MARGIN
+
+
 def get_unique_id(device: Device, load: Load | None) -> str:
     """Return a unique id for a given device / load combination."""
     return device.id if load is None else f"{load.device}_{load.channel}"
@@ -107,16 +138,20 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
         self._gateway_info: dict[str, Any] | None = None
         self._managed_buttons: dict[int, Any] | None = None
         self._findme_button_future: asyncio.Future | None = None
-        self._ws = GatewayWebsocket(host, token, _LOGGER)
+        self._ws = GatewayWebsocket(
+            host,
+            token,
+            _LOGGER,
+            create_task=lambda coro: hass.async_create_background_task(
+                coro, f"{DOMAIN} websocket {host}"
+            ),
+        )
         self._ws.subscribe(self.ws_update_data)
         self._ws_started = False
         # Monotonic time of the last WebSocket update / command per state id,
         # so a slow poll's older snapshot does not overwrite newer state.
         self._state_updated_at: dict[int, float] = {}
-        # Gateway boot time estimated from the last poll's uptime, and the
-        # boot time of the last reboot detected from it (monotonic clock).
-        self._gateway_boot_estimate: float | None = None
-        self._gateway_booted_at: float | None = None
+        self._gateway_boots = GatewayBootTracker()
         self._gateway_info_stale = False
 
     @property
@@ -457,18 +492,11 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
             _LOGGER.info("WebSocket to µGateway not running; reconnecting.")
             self._ws.reset_error_count()
             self._ws.init()
-        elif self._ws_predates_gateway_boot():
+        elif self._gateway_boots.predates_last_boot(self._ws.connected_since):
             _LOGGER.info(
                 "µGateway rebooted after the WebSocket was opened; reconnecting."
             )
             await self._ws.async_restart()
-
-    def _ws_predates_gateway_boot(self) -> bool:
-        """Return True if the current WebSocket connection was opened before the gateway booted."""
-        connected_since = self._ws.connected_since
-        if connected_since is None or self._gateway_booted_at is None:
-            return False
-        return connected_since < self._gateway_booted_at - REBOOT_DETECTION_MARGIN
 
     async def _fetch_data(self) -> None:
         """Fetch data from API endpoint.
@@ -853,21 +881,9 @@ class WiserCoordinator(DataUpdateCoordinator[None]):
         self._system_health = await self._api.async_get_system_health()
 
         uptime = self._system_health.get("uptime") if self._system_health else None
-        if isinstance(uptime, int | float):
-            # Compare boot times, not uptimes: with polls hours apart (the
-            # WebSocket postpones them) a second reboot can show a larger
-            # uptime than the last poll saw. Two estimates of the same boot
-            # differ by at most 2 x REBOOT_DETECTION_MARGIN.
-            boot_estimate = time.monotonic() - uptime
-            previous = self._gateway_boot_estimate
-            if (
-                previous is not None
-                and boot_estimate > previous + 2 * REBOOT_DETECTION_MARGIN
-            ):
-                _LOGGER.info("µGateway rebooted (uptime %s s)", uptime)
-                self._gateway_booted_at = boot_estimate
-                self._gateway_info_stale = True  # firmware may have changed
-            self._gateway_boot_estimate = boot_estimate
+        if isinstance(uptime, int | float) and self._gateway_boots.update(uptime):
+            _LOGGER.info("µGateway rebooted (uptime %s s)", uptime)
+            self._gateway_info_stale = True  # firmware may have changed
 
     async def async_update_gateway_info(self) -> None:
         """Update Wiser gateway info from µGateway."""

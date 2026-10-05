@@ -1,12 +1,13 @@
 """Tests for sensor platform entities."""
 
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from aiowiserbyfeller import Brightness, Device, Hail, Rain, Temperature, Wind
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import UnitOfSpeed, UnitOfTemperature
+import pytest
 
 from custom_components.wiser_by_feller.coordinator import WiserCoordinator
 from custom_components.wiser_by_feller.sensor import (
@@ -253,6 +254,7 @@ def test_hail_sensor_is_on():
 # ── temperature sensor excluded when assigned to HVAC group ──────────────────
 
 
+@pytest.mark.usefixtures("gateway_patches")
 async def test_temperature_sensor_excluded_when_assigned_to_hvac(
     hass, mock_config_entry, mock_coordinator
 ):
@@ -269,16 +271,8 @@ async def test_temperature_sensor_excluded_when_assigned_to_hvac(
     mock_coordinator.gateway_api_major_version = 6
 
     mock_config_entry.add_to_hass(hass)
-    with (
-        patch("custom_components.wiser_by_feller.SerializedAuth"),
-        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
-        patch(
-            "custom_components.wiser_by_feller.WiserCoordinator",
-            return_value=mock_coordinator,
-        ),
-    ):
-        await hass.config_entries.async_setup(mock_config_entry.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
 
     sensor_states = hass.states.async_entity_ids("sensor")
     # No standalone device temperature sensor — "core_temperature" is a GW health sensor

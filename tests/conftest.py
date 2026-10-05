@@ -163,9 +163,8 @@ def mock_coordinator(mock_config_entry, mock_gateway):
 
 
 @pytest.fixture
-async def setup_integration(hass, mock_config_entry, mock_coordinator):
-    """Set up the integration with a fully mocked coordinator."""
-    mock_config_entry.add_to_hass(hass)
+def gateway_patches(mock_coordinator):
+    """Patch the gateway client so a config entry sets up with mock_coordinator."""
     with (
         patch("custom_components.wiser_by_feller.SerializedAuth"),
         patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
@@ -174,6 +173,13 @@ async def setup_integration(hass, mock_config_entry, mock_coordinator):
             return_value=mock_coordinator,
         ),
     ):
-        await hass.config_entries.async_setup(mock_config_entry.entry_id)
-        await hass.async_block_till_done()
+        yield
+
+
+@pytest.fixture
+async def setup_integration(hass, mock_config_entry, gateway_patches):
+    """Set up the integration with a fully mocked coordinator."""
+    mock_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
     return mock_config_entry

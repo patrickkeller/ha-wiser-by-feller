@@ -1,6 +1,6 @@
 """Tests for light platform entities (light.py) and OnOff switch entity (switch.py)."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from aiowiserbyfeller import DaliRgbw, DaliTw, Dim, OnOff
 from aiowiserbyfeller.const import KIND_LIGHT, KIND_SWITCH
@@ -232,6 +232,7 @@ async def test_dim_rgbw_turn_on_with_color_calls_set_bri_rgbw():
 # ── impulse load excluded from light platform ─────────────────────────────────
 
 
+@pytest.mark.usefixtures("gateway_patches")
 async def test_impulse_onoff_skipped_from_light(
     hass, mock_config_entry, mock_coordinator
 ):
@@ -247,16 +248,8 @@ async def test_impulse_onoff_skipped_from_light(
     mock_coordinator.async_is_onoff_impulse_load = AsyncMock(return_value=True)
 
     mock_config_entry.add_to_hass(hass)
-    with (
-        patch("custom_components.wiser_by_feller.SerializedAuth"),
-        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
-        patch(
-            "custom_components.wiser_by_feller.WiserCoordinator",
-            return_value=mock_coordinator,
-        ),
-    ):
-        await hass.config_entries.async_setup(mock_config_entry.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
 
     # No light entity should have been registered
     light_states = hass.states.async_entity_ids("light")

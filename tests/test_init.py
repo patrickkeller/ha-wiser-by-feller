@@ -34,6 +34,7 @@ async def test_setup_entry_backfills_unknown_import_user(hass, setup_integration
     assert entry.data[CONF_IMPORTUSER] == IMPORT_USER_UNKNOWN
 
 
+@pytest.mark.usefixtures("gateway_patches")
 async def test_setup_entry_keeps_existing_import_user(
     hass, mock_config_entry, mock_coordinator
 ):
@@ -43,16 +44,8 @@ async def test_setup_entry_keeps_existing_import_user(
         mock_config_entry,
         data={**mock_config_entry.data, CONF_IMPORTUSER: "installer"},
     )
-    with (
-        patch("custom_components.wiser_by_feller.SerializedAuth"),
-        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
-        patch(
-            "custom_components.wiser_by_feller.WiserCoordinator",
-            return_value=mock_coordinator,
-        ),
-    ):
-        await hass.config_entries.async_setup(mock_config_entry.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
 
     assert mock_config_entry.data[CONF_IMPORTUSER] == "installer"
 
@@ -62,6 +55,7 @@ async def test_setup_entry_calls_ws_init(hass, setup_integration, mock_coordinat
     mock_coordinator.ws_init.assert_called_once()
 
 
+@pytest.mark.usefixtures("gateway_patches")
 async def test_setup_entry_starts_ws_init_on_gen_a(
     hass, mock_config_entry, mock_coordinator
 ):
@@ -73,16 +67,8 @@ async def test_setup_entry_starts_ws_init_on_gen_a(
     """
     mock_coordinator.is_gen_b = False
     mock_config_entry.add_to_hass(hass)
-    with (
-        patch("custom_components.wiser_by_feller.SerializedAuth"),
-        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
-        patch(
-            "custom_components.wiser_by_feller.WiserCoordinator",
-            return_value=mock_coordinator,
-        ),
-    ):
-        await hass.config_entries.async_setup(mock_config_entry.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
 
     mock_coordinator.ws_init.assert_called_once()
 
@@ -111,18 +97,13 @@ async def test_setup_entry_registers_status_light_service(hass, setup_integratio
 # ── gateway registration ──────────────────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("gateway_patches")
 async def test_setup_gateway_registers_device(
     hass, mock_config_entry, mock_coordinator, mock_gateway
 ):
     """async_setup_gateway creates a device registry entry for the µGateway."""
     mock_config_entry.add_to_hass(hass)
     with (
-        patch("custom_components.wiser_by_feller.SerializedAuth"),
-        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
-        patch(
-            "custom_components.wiser_by_feller.WiserCoordinator",
-            return_value=mock_coordinator,
-        ),
         patch(
             "custom_components.wiser_by_feller.parse_wiser_device_ref_c",
             return_value={"generation": "Gen B"},
@@ -416,6 +397,7 @@ async def test_button_service_unknown_gateway_raises(hass, setup_integration):
         )
 
 
+@pytest.mark.usefixtures("gateway_patches")
 async def test_button_service_requires_gateway_when_multiple(
     hass, setup_integration, mock_coordinator
 ):
@@ -428,16 +410,8 @@ async def test_button_service_requires_gateway_when_multiple(
         unique_id="SECOND_SN",
     )
     second.add_to_hass(hass)
-    with (
-        patch("custom_components.wiser_by_feller.SerializedAuth"),
-        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
-        patch(
-            "custom_components.wiser_by_feller.WiserCoordinator",
-            return_value=mock_coordinator,
-        ),
-    ):
-        await hass.config_entries.async_setup(second.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_setup(second.entry_id)
+    await hass.async_block_till_done()
 
     with pytest.raises(ServiceValidationError, match="Multiple"):
         await hass.services.async_call(

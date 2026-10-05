@@ -1,10 +1,11 @@
 """Tests for climate platform entities."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from aiowiserbyfeller import HvacGroup
 from aiowiserbyfeller.hvac import HvacChannelState
 from homeassistant.components.climate import HVACAction, HVACMode
+import pytest
 
 from custom_components.wiser_by_feller.climate import WiserHvacGroupEntity, resolve_room
 from custom_components.wiser_by_feller.coordinator import WiserCoordinator
@@ -209,6 +210,7 @@ def test_unique_id_uses_thermostat_id():
 # ── setup skips groups without thermostat ─────────────────────────────────────
 
 
+@pytest.mark.usefixtures("gateway_patches")
 async def test_climate_setup_skips_group_without_thermostat(
     hass, mock_config_entry, mock_coordinator
 ):
@@ -218,16 +220,8 @@ async def test_climate_setup_skips_group_without_thermostat(
     mock_coordinator.hvac_groups = {10: group}
 
     mock_config_entry.add_to_hass(hass)
-    with (
-        patch("custom_components.wiser_by_feller.SerializedAuth"),
-        patch("custom_components.wiser_by_feller.WiserByFellerAPI"),
-        patch(
-            "custom_components.wiser_by_feller.WiserCoordinator",
-            return_value=mock_coordinator,
-        ),
-    ):
-        await hass.config_entries.async_setup(mock_config_entry.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
 
     climate_states = hass.states.async_entity_ids("climate")
     assert len(climate_states) == 0
